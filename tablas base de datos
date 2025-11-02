@@ -1,0 +1,325 @@
+CREATE DATABASE  greenpower;
+
+USE greenpower;
+
+CREATE TABLE planta_de_generacion (
+id_planta_de_generacion INT AUTO_INCREMENT PRIMARY KEY,
+codigo_unico VARCHAR(50) NOT NULL UNIQUE,
+fecha_puesta_en_marcha DATE NOT NULL,
+inversion_general DECIMAL(15,2) NOT NULL,
+estado_operativo VARCHAR(30) NOT NULL,
+ubicacion_geografica VARCHAR(100) NOT NULL,
+extension_en_hectareas DECIMAL(10,2) NOT NULL,
+coordenadas VARCHAR(60) NOT NULL,
+vida_util_estimada INT,
+capacidad_instalada_mw DECIMAL(10,2) NOT NULL
+);
+
+DESCRIBE planta_de_generacion;
+
+ALTER TABLE planta_de_generacion
+ADD id_tipo_planta INT NOT NULL,
+ADD FOREIGN KEY (id_tipo_planta) REFERENCES tipo_planta(id_tipo_planta);
+
+CREATE TABLE nombre_de_la_planta_de_generacion (
+id_nombre_planta INT AUTO_INCREMENT PRIMARY KEY,
+eolica VARCHAR(40) NOT NULL,
+hidroelectrica VARCHAR(40) NOT NULL,
+biomasa VARCHAR(40) NOT NULL,
+fotovoltaica VARCHAR(40) NOT NULL,
+solar VARCHAR(40) NOT NULL,
+nuclear VARCHAR(40) NOT NULL,
+termica VARCHAR(40) NOT NULL,
+id_planta_de_generacion INT,
+FOREIGN KEY (id_planta_de_generacion) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+DESCRIBE nombre_de_la_planta_de_generacion;
+
+CREATE TABLE tipo_planta (
+id_tipo_planta INT AUTO_INCREMENT PRIMARY KEY,
+tipo VARCHAR(40) NOT NULL UNIQUE
+);
+CREATE TABLE equipos_de_generacion (
+id_equipo_generacion INT AUTO_INCREMENT PRIMARY KEY,
+mantenimientos_programados VARCHAR(40) NOT NULL,
+potencia_nominal DECIMAL(10,2) NOT NULL,
+numero_serie VARCHAR(50) NOT NULL UNIQUE,
+ultima_revision DATE NOT NULL,
+estado_actual VARCHAR(30) NOT NULL,
+marca VARCHAR(50) NOT NULL,
+modelo VARCHAR(50) NOT NULL,
+fecha_instalacion DATE NOT NULL,
+eficiencia DECIMAL(5,2) NOT NULL,
+id_planta_de_generacion INT,
+FOREIGN KEY (id_planta_de_generacion) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+DESCRIBE equipos_de_generacion;
+
+
+CREATE TABLE tipo_de_equipos_de_generacion (
+id_tipo_equipo INT AUTO_INCREMENT PRIMARY KEY,
+aerogenerador VARCHAR(30) NOT NULL,
+turbina VARCHAR(30)NOT NULL,
+hidraulica VARCHAR(30) NOT NULL,
+solar VARCHAR(30) NOT NULL,
+id_equipo_generacion INT,
+FOREIGN KEY (id_equipo_generacion) REFERENCES equipos_de_generacion(id_equipo_generacion)
+);
+
+DESCRIBE tipo_de_equipos_de_generacion;
+
+
+
+CREATE TABLE produccion_energetica (
+id_produccion_energetica INT AUTO_INCREMENT PRIMARY KEY,
+equipos_activos INT,
+potencia_instantanea DECIMAL(10,2) NOT NULL,
+condiciones_meteorologicas VARCHAR(40) NOT NULL,
+incidencias VARCHAR(50) NOT NULL,
+factor_capacidad DECIMAL(5,2) NOT NULL,
+codigo_planta VARCHAR(50) NOT NULL,
+fecha_hora DATETIME NOT NULL,
+id_planta_de_generacion INT,
+FOREIGN KEY (id_planta_de_generacion) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+DESCRIBE produccion_energetica;
+
+
+CREATE TABLE energia_generada_por_periodo (
+id_energia_generada_periodo INT AUTO_INCREMENT PRIMARY KEY,
+horaria DECIMAL(10,2) NOT NULL,
+diaria DECIMAL(10,2) NOT NULL,
+mensual DECIMAL(10,2) NOT NULL,
+id_produccion_energetica INT,
+FOREIGN KEY (id_produccion_energetica) REFERENCES produccion_energetica(id_produccion_energetica)
+);
+
+DESCRIBE energia_generada_por_periodo;
+;
+
+CREATE TABLE estaciones_meteorologicas (
+id_estacion_meteorologica INT AUTO_INCREMENT PRIMARY KEY,
+ubicacion VARCHAR(20) NOT NULL,
+coordenadas VARCHAR(20) NOT NULL,
+estado_funcionamiento VARCHAR(20) NOT NULL,
+ultima_calibracion DATE NOT NULL,
+frecuencia_lectura VARCHAR(20) NOT NULL,
+codigo_unico VARCHAR(20) NOT NULL UNIQUE 
+);
+
+DESCRIBE estaciones_meteorologicas;
+
+
+CREATE TABLE equipos_instalados (
+id_equipo_instalado INT AUTO_INCREMENT PRIMARY KEY,
+anemometros INT NOT NULL,
+piranometros INT NOT NULL,
+termometros INT NOT NULL,
+id_estacion_meteorologica INT NULL,
+fOREIGN KEY (id_estacion_meteorologica) REFERENCES estaciones_meteorologicas(id_estacion_meteorologica)
+);
+
+DESCRIBE equipos_instalados;
+
+
+CREATE TABLE lecturas_meteorologicas (
+id_lectura_meteorologica INT AUTO_INCREMENT PRIMARY KEY,
+validacion ENUM('automatica', 'manual') NOT NULL,
+fecha_hora DATETIME NOT NULL,
+unidad_medida VARCHAR(50) NOT NULL,
+valor_medido DECIMAL(10,2) NOT NULL,
+id_estacion_meteorologica INT NULL,
+FOREIGN KEY (id_estacion_meteorologica) REFERENCES estaciones_meteorologicas(id_estacion_meteorologica)
+);
+
+DESCRIBE lecturas_meteorologicas;
+
+
+CREATE TABLE tipo_de_lectura (
+id_tipo_de_lectura INT AUTO_INCREMENT PRIMARY KEY,
+velocidad DECIMAL(5,2) NOT NULL,
+viento DECIMAL(5,2) NOT NULL,
+radiacion DECIMAL(6,2) NOT NULL,
+solar DECIMAL(6,2) NOT NULL,
+temperatura DECIMAL(5,2) NOT NULL,
+humedad DECIMAL(5,2) NOT NULL,
+precipitacion DECIMAL(6,2) NOT NULL,
+id_lectura_meteorologica INT NOT NULL,
+FOREIGN KEY (id_lectura_meteorologica) REFERENCES lecturas_meteorologicas(id_lectura_meteorologica)
+);
+
+DESCRIBE tipo_de_lectura;
+
+
+
+
+CREATE TABLE contratos_de_venta_de_energia (
+id_contrato_venta_energia INT AUTO_INCREMENT PRIMARY KEY,
+fecha DATE NOT NULL,
+numero VARCHAR(30) NOT NULL,
+periodo_vigencia VARCHAR(100) NOT NULL,
+condiciones_especiales VARCHAR(40) NOT NULL,
+tarifa_acordada DECIMAL(10,2) NOT NULL,
+potencia_contratada DECIMAL(10,2) NOT NULL,
+estado VARCHAR(50) NOT NULL,
+punto_de_entrega VARCHAR(100) NOT NULL
+);
+
+DESCRIBE contratos_de_venta_de_energia;
+
+
+CREATE TABLE cliente (
+id_cliente INT AUTO_INCREMENT PRIMARY KEY,
+gran_consumidor BOOLEAN NOT NULL,
+distribuidor BOOLEAN NOT NULL,
+nombre VARCHAR(50) NOT NULL,
+correo VARCHAR(50) NOT NULL,
+telefono VARCHAR(20) NOT NULL,
+id_contrato_venta_energia INT NOT NULL,
+FOREIGN KEY (id_contrato_venta_energia) REFERENCES contratos_de_venta_de_energia(id_contrato_venta_energia)
+);
+
+DESCRIBE cliente;
+
+
+CREATE TABLE tipo_de_documento (
+id_tipo_de_documento INT AUTO_INCREMENT PRIMARY KEY,
+cedula VARCHAR(12) NOT NULL,
+tarjeta_de_identidad VARCHAR(20) NOT NULL,
+pasaporte VARCHAR(20) NOT NULL,
+responsabilidad_civil VARCHAR(20) NOT NULL,
+cedula_de_extranjeria VARCHAR(20) NOT NULL,
+id_cliente INT NOT NULL,
+FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente)
+);
+
+DESCRIBE tipo_de_documento;
+
+
+CREATE TABLE red_de_distribucion (
+id_red_de_distribucion INT AUTO_INCREMENT PRIMARY KEY,
+estado VARCHAR(30) NOT NULL,
+longitud DECIMAL(10,2) NOT NULL,
+fecha_de_instalacion DATE NOT NULL,
+subestaciones_conectadas VARCHAR(50) NOT NULL,
+capacidad DECIMAL(10,2) NOT NULL,
+ultimo_mantenimiento DATE
+);
+
+DESCRIBE red_de_distribucion;
+
+
+CREATE TABLE codigo_de_linea (
+id_codigo_de_linea INT AUTO_INCREMENT PRIMARY KEY,
+alta_tension VARCHAR(10) NOT NULL,
+media_tension VARCHAR(10) NOT NULL,
+baja_tension VARCHAR(10) NOT NULL,
+id_red_de_distribucion INT NOT NULL,
+FOREIGN KEY (id_red_de_distribucion) REFERENCES red_de_distribucion(id_red_de_distribucion)
+);
+
+
+
+DESCRIBE codigo_de_linea;
+
+
+CREATE TABLE subestaciones_electricas (
+id_subestacion_electrica INT AUTO_INCREMENT PRIMARY KEY,
+codigo_unico VARCHAR(50) NOT NULL,
+nombre VARCHAR(50) NOT NULL,
+estado_operativo VARCHAR(50) NOT NULL,
+ultimo_mantenimiento DATE NOT NULL,
+equipos_instalados VARCHAR(30) NOT NULL,
+ubicacion VARCHAR(50) NOT NULL,
+capacidad_de_transformacion DECIMAL(10,2) NOT NULL,
+fecha_de_puesta_en_servicio DATE NOT null
+);
+
+DESCRIBE subestaciones_electricas;
+
+
+
+CREATE TABLE tension_de_subestaciones_electricas (
+id_tension_de_subestacion_electrica INT AUTO_INCREMENT PRIMARY KEY,
+alta_tension VARCHAR(10) NOT NULL,
+media_tension VARCHAR(10) NOT NULL,
+baja_tension VARCHAR(10)NOT NULL,
+id_subestacion_electrica INT NOT NULL,
+FOREIGN KEY (id_subestacion_electrica) REFERENCES subestaciones_electricas(id_subestacion_electrica)
+);
+
+DESCRIBE tension_de_subestaciones_electricas;
+
+
+CREATE TABLE tipo_de_subestacion (
+id_tipo_de_subestacion INT AUTO_INCREMENT PRIMARY KEY,
+generacion VARCHAR(10)NOT NULL,
+transmision VARCHAR(10) NOT NULL,
+distribucion VARCHAR(10) NOT NULL,
+id_subestacion_electrica INT NOT NULL,
+FOREIGN KEY (id_subestacion_electrica) REFERENCES subestaciones_electricas(id_subestacion_electrica)
+);
+
+DESCRIBE tipo_de_subestacion;
+
+
+CREATE TABLE mantenimiento_de_instalaciones (
+id_mantenimiento_de_instalacion INT AUTO_INCREMENT PRIMARY KEY,
+equipos_involucrados VARCHAR(50) NOT NULL,
+planta VARCHAR(50) NOT NULL,
+descripcion_de_actividades VARCHAR(30) NOT NULL,
+resultados VARCHAR(30) NOT NULL,
+duracion VARCHAR(50) NOT NULL,
+materiales_utilizados VARCHAR(30) NOT NULL,
+orden_de_trabajo VARCHAR(50) NOT NULL,
+id_planta_de_generacion INT NOT NULL,
+FOREIGN KEY (id_planta_de_generacion) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+
+
+CREATE TABLE tecnicos (
+id_tecnico INT AUTO_INCREMENT PRIMARY KEY,
+nombre VARCHAR(30) NOT NULL,
+cargo VARCHAR(50) NOT NULL,
+telefono VARCHAR(20) NOT NULL,
+correo VARCHAR(20) NOT NULL,
+id_tipo_de_documento INT NOT NULL,
+FOREIGN KEY (id_tipo_de_documento) REFERENCES tipo_de_documento(id_tipo_de_documento)
+);
+
+DESCRIBE tecnicos;
+
+
+CREATE TABLE fecha_programada (
+id_fecha_programada INT AUTO_INCREMENT PRIMARY KEY,
+correctivo DATE NOT NULL,
+predictivo DATE NOT NULL,
+preventivo DATE NOT NULL,
+id_mantenimiento_de_instalacion INT NOT NULL,
+FOREIGN KEY (id_mantenimiento_de_instalacion) REFERENCES mantenimiento_de_instalaciones(id_mantenimiento_de_instalacion)
+);
+
+DESCRIBE fecha_programada;
+
+
+CREATE TABLE incidencias_operativas (
+id_incidencia_operativa INT AUTO_INCREMENT PRIMARY KEY,
+causa_identificada VARCHAR(100) NOT NULL,
+descripcion VARCHAR(50) NOT NULL,
+tipo_de_incidencia VARCHAR(50) NOT NULL,
+impacto_en_la_produccion VARCHAR(50) NOT NULL,
+codigo VARCHAR(50) NOT NULL,
+personal_involucrado VARCHAR(30) NOT NULL,
+tiempo_de_resolucion VARCHAR(50) NOT NULL,
+acciones_tomadas VARCHAR(30) NOT NULL,
+planta_afectada VARCHAR(30) NOT NULL,
+fecha_y_hora DATETIME NOT NULL,
+id_planta_de_generacion INT NOT NULL,
+FOREIGN KEY (id_planta_de_generacion) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+DESCRIBE incidencias_operativas;
