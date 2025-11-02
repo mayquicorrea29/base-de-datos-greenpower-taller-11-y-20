@@ -1,0 +1,737 @@
+#1 ¿Cuáles son todos los equipos de una planta específica?
+SELECT *
+FROM equipos_de_generacion
+WHERE id_planta_de_generacion = 1;
+
+#2 ¿Qué plantas tienen capacidad instalada superior o igual a 50 MW?
+SELECT *
+FROM planta_de_generacion
+WHERE capacidad_instalada_mw >= 50;
+
+#3	¿Cuáles son las lecturas meteorológicas de velocidad de viento superior a 20?
+SELECT tl.*, lm.fecha_hora, lm.unidad_medida
+FROM tipo_de_lectura tl
+JOIN lecturas_meteorologicas lm
+ON tl.id_lectura_meteorologica = lm.id_lectura_meteorologica
+WHERE tl.viento > 20;
+
+#4 ¿Qué plantas no son ni solares ni eólicas?
+
+
+
+#5 ¿Cuáles son las producciones energéticas de febrero de 2024?
+
+SELECT pe.id_produccion_energetica,
+pe.id_planta_de_generacion,
+p.codigo_unico AS codigo_planta,
+pe.potencia_instantanea,
+pe.factor_capacidad,
+pe.condiciones_meteorologicas,
+pe.incidencias,
+pe.fecha_hora
+FROM produccion_energetica pe
+LEFT JOIN planta_de_generacion p ON pe.id_planta_de_generacion = p.id_planta_de_generacion
+WHERE pe.fecha_hora BETWEEN '2024-02-01 00:00:00' AND '2024-02-29 23:59:59'
+ORDER BY pe.fecha_hora;
+
+#6 ¿Qué estaciones meteorológicas tienen anemómetro y registran radiación solar?
+
+SELECT DISTINCT em.*
+FROM estaciones_meteorologicas em
+JOIN equipos_instalados ei 
+ON ei.id_estacion_meteorologica = em.id_estacion_meteorologica
+JOIN lecturas_meteorologicas lm 
+ON lm.id_estacion_meteorologica = em.id_estacion_meteorologica
+JOIN tipo_de_lectura tl 
+ON tl.id_lectura_meteorologica = lm.id_lectura_meteorologica
+WHERE ei.anemometros > 0
+AND (tl.radiacion > 0 OR tl.solar > 0);
+
+
+#7 ¿Cuáles son los equipos con características "alta eficiencia" o "nueva generación" en su descripción?
+
+SELECT *
+FROM equipos_de_generacion
+WHERE LOWER(mantenimientos_programados) LIKE '%alta eficiencia%'
+   OR LOWER(mantenimientos_programados) LIKE '%nueva generación%'
+   OR LOWER(estado_actual) LIKE '%alta eficiencia%'
+   OR LOWER(estado_actual) LIKE '%nueva generación%'
+   OR LOWER(marca) LIKE '%nueva generación%'
+   OR LOWER(modelo) LIKE '%nueva generación%';
+
+#tigger
+#1.TR_ActualizarEstadisticasProduccion: Actualiza estadísticas de producción tras registrar datos.
+
+CREATE TABLE estadisticas_produccion (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    id_planta INT NOT NULL,
+    produccion_total DECIMAL(15,2) NOT NULL DEFAULT 0,
+    ultima_actualizacion DATETIME NOT NULL,
+    FOREIGN KEY (id_planta) REFERENCES planta_de_generacion(id_planta_de_generacion)
+);
+
+DELIMITER $$
+
+CREATE TRIGGER TR_ActualizarEstadisticasProduccion
+AFTER INSERT ON produccion_energetica
+FOR EACH ROW
+BEGIN
+    UPDATE estadisticas_produccion
+    SET produccion_total = produccion_total + NEW.potencia_instantanea,
+        ultima_actualizacion = NOW()
+    WHERE id_planta = NEW.id_planta_de_generacion;
+
+    IF ROW_COUNT() = 0 THEN
+        INSERT INTO estadisticas_produccion (id_planta, produccion_total, ultima_actualizacion)
+        VALUES (NEW.id_planta_de_generacion, NEW.potencia_instantanea, NOW());
+    END IF;
+END$$
+
+DELIMITER ;
+ #2.TR_VerificarEficienciaEquipos: Verifica la eficiencia de los equipos comparando con estándares
+DELIMITER //
+
+CREATE TRIGGER TR_VerificarEficienciaEquipos
+AFTER INSERT ON equipos_de_generacion
+FOR EACH ROW
+BEGIN
+    IF NEW.eficiencia < 80 THEN
+        UPDATE equipos_de_generacion
+        SET estado_actual = 'Revisar'
+        WHERE id_equipo_generacion = NEW.id_equipo_generacion;
+    ELSE
+        UPDATE equipos_de_generacion
+        SET estado_actual = 'Operativo'
+        WHERE id_equipo_generacion = NEW.id_equipo_generacion;
+    END IF;
+END //
+
+DELIMITER ;
+
+#3 TR_GenerarAlertaRendimientoBajo: Genera alertas cuando el rendimiento cae por debajo de lo esperado.
+
+CREATE TABLE alertas_rendimiento (
+    id_alerta INT AUTO_INCREMENT PRIMARY KEY,
+    id_equipo INT NOT NULL,
+    mensaje VARCHAR(100),
+    fecha_alerta DATETIME,
+    FOREIGN KEY (id_equipo) REFERENCES equipos_de_generacion(id_equipo_generacion)
+);
+
+DELIMITER //
+
+CREATE TRIGGER TR_GenerarAlertaRendimientoBajo
+AFTER INSERT ON equipos_de_generacion
+FOR EACH ROW
+BEGIN
+    IF NEW.eficiencia < 70 THEN
+        INSERT INTO alertas_rendimiento (id_equipo, mensaje, fecha_alerta)
+        VALUES (NEW.id_equipo_generacion, 'Rendimiento bajo: revisar equipo', NOW());
+    END IF;
+END //
+
+DELIMITER ;
+#4.TR_ActualizarHistorialEquipo: Actualiza el historial de un equipo tras mantenimiento.
+CREATE TABLE historial_equipos (
+    id_historial INT AUTO_INCREMENT PRIMARY KEY,
+    id_equipo INT NOT NULL,
+    fecha_mantenimiento DATE,
+    tipo_mantenimiento VARCHAR(50),
+    observaciones VARCHAR(255),
+    FOREIGN KEY (id_equipo) REFERENCES equipos_de_generacion(id_equipo_generacion)
+);
+
+DELIMITER //
+
+CREATE TRIGGER TR_ActualizarHistorialEquipo
+AFTER INSERT ON fecha_programada
+FOR EACH ROW
+BEGIN
+    INSERT INTO historial_equipos (id_equipo, fecha_mantenimiento, tipo_mantenimiento, observaciones)
+    VALUES (NEW.id_mantenimiento_de_instalacion, NEW.correctivo, 'Correctivo', 'Mantenimiento programado');
+END //
+
+DELIMITER ;
+# 5.TR_CalcularCumplimientoContratos: Verifica el cumplimiento de los compromisos contractuales.
+CREATE TABLE cumplimiento_contratos (
+    id_cumplimiento INT AUTO_INCREMENT PRIMARY KEY,
+    id_contrato INT NOT NULL,
+    fecha_registro DATETIME,
+    porcentaje_cumplimiento DECIMAL(5,2),
+    estado VARCHAR(20),
+    FOREIGN KEY (id_contrato) REFERENCES contratos_de_venta_de_energia(id_contrato_venta_energia)
+);
+DELIMITER //
+
+CREATE TRIGGER TR_CalcularCumplimientoContratos
+AFTER INSERT ON produccion_energetica
+FOR EACH ROW
+BEGIN
+    DECLARE porcentaje DECIMAL(5,2);
+
+    -- Supongamos que codigo_planta coincide con numero de contrato para simplificar
+    SELECT (NEW.potencia_instantanea / c.potencia_contratada) * 100
+    INTO porcentaje
+    FROM contratos_de_venta_de_energia c
+    WHERE c.numero = NEW.codigo_planta;
+
+    INSERT INTO cumplimiento_contratos (id_contrato, fecha_registro, porcentaje_cumplimiento, estado)
+    SELECT c.id_contrato_venta_energia, NOW(), porcentaje,
+        CASE
+            WHEN porcentaje >= 100 THEN 'Cumplido'
+            ELSE 'Incumplido'
+        END
+    FROM contratos_de_venta_de_energia c
+    WHERE c.numero = NEW.codigo_planta;
+END //
+
+DELIMITER ;
+#sp
+
+#1.RegistrarPlantaGeneracion: Registra una nueva planta de generación con sus características
+
+DELIMITER //
+
+CREATE PROCEDURE RegistrarPlantaGeneracion(
+IN p_codigo_unico VARCHAR(50),
+IN p_fecha_puesta_en_marcha DATE,
+IN p_inversion_general DECIMAL(15,2),
+IN p_estado_operativo VARCHAR(30),
+IN p_ubicacion_geografica VARCHAR(100),
+IN p_extension_en_hectareas DECIMAL(10,2),
+IN p_coordenadas VARCHAR(60),
+IN p_vida_util_estimada INT,
+IN p_capacidad_instalada_mw DECIMAL(10,2),
+IN p_id_tipo_planta INT
+)
+BEGIN
+INSERT INTO planta_de_generacion (
+codigo_unico,
+fecha_puesta_en_marcha,
+inversion_general,
+estado_operativo,
+ubicacion_geografica,
+extension_en_hectareas,
+coordenadas,
+vida_util_estimada,
+capacidad_instalada_mw,
+id_tipo_planta
+)
+VALUES (
+p_codigo_unico,
+p_fecha_puesta_en_marcha,
+p_inversion_general,
+p_estado_operativo,
+p_ubicacion_geografica,
+p_extension_en_hectareas,
+p_coordenadas,
+p_vida_util_estimada,
+p_capacidad_instalada_mw,
+p_id_tipo_planta
+);
+END //
+
+DELIMITER ;
+
+#2.ProgramarMantenimientoEquipos: Programa mantenimiento para equipos de generación.
+DELIMITER $$
+
+CREATE PROCEDURE ProgramarMantenimientoEquipos(
+    IN p_id_equipo INT,
+    IN p_fecha_programada DATE,
+    IN p_tipo_mantenimiento VARCHAR(30),
+    IN p_descripcion TEXT
+)
+BEGIN
+    INSERT INTO mantenimiento_equipos (
+        id_equipo,
+        fecha_programada,
+        tipo_mantenimiento,
+        descripcion
+    )
+    VALUES (
+        p_id_equipo,
+        p_fecha_programada,
+        p_tipo_mantenimiento,
+        p_descripcion
+    );
+END$$
+
+DELIMITER ;
+#3.RegistrarProduccionEnergetica: Registra la producción energética diaria por planta.
+
+DELIMITER $$
+
+CREATE PROCEDURE RegistrarProduccionEnergetica(
+    IN p_id_planta INT,
+    IN p_fecha_registro DATE,
+    IN p_potencia_instantanea DECIMAL(10,2),
+    IN p_condiciones_meteorologicas VARCHAR(100),
+    IN p_incidencias VARCHAR(255),
+    IN p_factor_capacidad DECIMAL(5,2)
+)
+BEGIN
+    INSERT INTO produccion_energetica (
+        id_planta_de_generacion,
+        fecha_registro,
+        potencia_instantanea,
+        condiciones_meteorologicas,
+        incidencias,
+        factor_capacidad
+    )
+    VALUES (
+        p_id_planta,
+        p_fecha_registro,
+        p_potencia_instantanea,
+        p_condiciones_meteorologicas,
+        p_incidencias,
+        p_factor_capacidad
+    );
+END$$
+
+DELIMITER ;
+
+#4 CrearContratoVentaEnergia: Crea un contrato de venta de energía con un cliente.
+
+DELIMITER $$
+
+CREATE PROCEDURE CrearContratoVentaEnergia(
+    IN p_id_cliente INT,
+    IN p_fecha DATE,
+    IN p_numero VARCHAR(30),
+    IN p_periodo_vigencia VARCHAR(100),
+    IN p_condiciones_especiales VARCHAR(40),
+    IN p_tarifa_acordada DECIMAL(10,2),
+    IN p_potencia_contratada DECIMAL(10,2),
+    IN p_estado VARCHAR(50),
+    IN p_punto_entrega VARCHAR(100)
+)
+BEGIN
+    DECLARE nuevo_contrato INT;
+
+    -- Insertar el contrato
+    INSERT INTO contratos_de_venta_de_energia (
+        fecha,
+        numero,
+        periodo_vigencia,
+        condiciones_especiales,
+        tarifa_acordada,
+        potencia_contratada,
+        estado,
+        punto_de_entrega
+    ) VALUES (
+        p_fecha,
+        p_numero,
+        p_periodo_vigencia,
+        p_condiciones_especiales,
+        p_tarifa_acordada,
+        p_potencia_contratada,
+        p_estado,
+        p_punto_entrega
+    );
+
+    -- Obtener el ID del contrato recién creado
+    SET nuevo_contrato = LAST_INSERT_ID();
+
+    -- Asociar el contrato al cliente
+    UPDATE cliente
+    SET id_contrato_venta_energia = nuevo_contrato
+    WHERE id_cliente = p_id_cliente;
+
+END$$
+
+DELIMITER ;
+
+#5.RegistrarLecturasMeteorologicas: Registra lecturas de las estaciones meteorológicas.
+DELIMITER $$
+
+CREATE PROCEDURE RegistrarLecturasMeteorologicas(
+    IN p_validacion ENUM('automatica','manual'),
+    IN p_fecha_hora DATETIME,
+    IN p_unidad_medida VARCHAR(50),
+    IN p_valor_medido DECIMAL(10,2),
+    IN p_id_estacion INT
+)
+BEGIN
+    -- Verificar que la estación exista
+    IF (SELECT COUNT(*) FROM estaciones_meteorologicas 
+        WHERE id_estacion_meteorologica = p_id_estacion) = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Error: La estación meteorológica no existe';
+    END IF;
+
+    -- Registrar la lectura
+    INSERT INTO lecturas_meteorologicas (
+        validacion,
+        fecha_hora,
+        unidad_medida,
+        valor_medido,
+        id_estacion_meteorologica
+    ) VALUES (
+        p_validacion,
+        p_fecha_hora,
+        p_unidad_medida,
+        p_valor_medido,
+        p_id_estacion
+    );
+END$$
+
+DELIMITER ;
+
+#Vistas
+#1.	V_ProduccionDiariaPlanta: Muestra la producción diaria por planta y tipo de energía.
+CREATE VIEW V_ProduccionDiariaPlanta AS
+SELECT 
+    p.id_planta_de_generacion,
+    p.codigo_unico,
+    t.tipo AS tipo_energia,
+    DATE(pe.fecha_hora) AS fecha,
+    SUM(pe.potencia_instantanea) AS produccion_diaria_mw
+FROM planta_de_generacion p
+JOIN tipo_planta t ON p.id_tipo_planta = t.id_tipo_planta
+JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+GROUP BY p.id_planta_de_generacion, t.tipo, DATE(pe.fecha_hora);
+
+#2 EVT_GenerarPronosticosProduccion: Genera pronósticos de producción según condiciones meteorológicas.
+
+CREATE EVENT IF NOT EXISTS EVT_GenerarPronosticosProduccion
+ON SCHEDULE EVERY 1 DAY
+DO
+    INSERT INTO produccion_energetica (equipos_activos, potencia_instantanea, condiciones_meteorologicas, factor_capacidad, codigo_planta, fecha_hora, id_planta_de_generacion)
+    SELECT 
+        1,  -- Suponemos 1 equipo activo por simplificación
+        AVG(l.valor_medido) * 0.8,  -- Pronóstico simple basado en promedio meteorológico y factor de corrección
+        CONCAT('Viento:', MAX(l.valor_medido), ' Temperatura:', MAX(l.valor_medido)),
+        0.8,  -- Factor de capacidad estimado
+        p.codigo_unico,
+        NOW(),
+        p.id_planta_de_generacion
+    FROM planta_de_generacion p
+    JOIN estaciones_meteorologicas em ON 1=1  -- Podríamos unir según ubicación, aquí simplificado
+    JOIN lecturas_meteorologicas l ON em.id_estacion_meteorologica = l.id_estacion_meteorologica
+    GROUP BY p.id_planta_de_generacion;
+    
+ #3.	EVT_ActualizarFactorCapacidad: Actualiza el factor de capacidad por planta mensualmente
+ CREATE EVENT IF NOT EXISTS EVT_ActualizarFactorCapacidad
+ON SCHEDULE EVERY 1 MONTH
+DO
+    UPDATE produccion_energetica pe
+    JOIN planta_de_generacion p ON pe.id_planta_de_generacion = p.id_planta_de_generacion
+    SET pe.factor_capacidad = 0.85  -- Valor promedio mensual estimado
+    WHERE MONTH(pe.fecha_hora) = MONTH(CURDATE()) AND YEAR(pe.fecha_hora) = YEAR(CURDATE());
+    
+#4.	EVT_MonitorearCumplimientoContratos: Monitorea el cumplimiento de los contratos de venta
+CREATE EVENT IF NOT EXISTS EVT_MonitorearCumplimientoContratos
+ON SCHEDULE EVERY 1 DAY
+DO
+    UPDATE contratos_de_venta_de_energia
+    SET estado = CASE
+                    WHEN fecha < CURDATE() AND estado = 'Vigente' THEN 'Vencido'
+                    ELSE estado
+                 END;
+
+#5 EVT_ProgramarMantenimientosPreventivos: Programa mantenimientos preventivos según horas de funcionamiento.
+CREATE EVENT IF NOT EXISTS EVT_ProgramarMantenimientosPreventivos
+ON SCHEDULE EVERY 1 DAY
+DO
+    INSERT INTO fecha_programada (correctivo, predictivo, preventivo, id_mantenimiento_de_instalacion)
+    SELECT 
+        NULL, 
+        NULL, 
+        CURDATE() + INTERVAL 30 DAY,  -- Programa mantenimiento preventivo 30 días después
+        m.id_mantenimiento_de_instalacion
+    FROM mantenimiento_de_instalaciones m
+    JOIN equipos_de_generacion e ON m.id_planta_de_generacion = e.id_planta_de_generacion
+    WHERE e.estado_actual = 'Operativo';
+
+#Eventos
+
+#1.FN_CalcularEficienciaConversion: Calcula la eficiencia de conversión energética de una planta.
+
+DELIMITER //
+
+CREATE FUNCTION FN_CalcularEficienciaConversion(p_id_planta INT)
+RETURNS DECIMAL(5,2)
+DETERMINISTIC
+BEGIN
+    DECLARE eficiencia DECIMAL(5,2);
+
+    SELECT 
+        (SUM(eg.horaria) / (p.capacidad_instalada_mw * COUNT(eg.id_energia_generada_periodo))) * 100
+    INTO eficiencia
+    FROM planta_de_generacion p
+    JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+    JOIN energia_generada_por_periodo eg ON pe.id_produccion_energetica = eg.id_produccion_energetica
+    WHERE p.id_planta_de_generacion = p_id_planta;
+
+    RETURN eficiencia;
+END //
+
+DELIMITER ;
+
+#2.FN_EstimarProduccionDiaria: Estima la producción diaria según condiciones meteorológicas.
+CREATE VIEW V_ProduccionDiariaPlanta AS
+SELECT 
+    p.id_planta_de_generacion,
+    p.codigo_unico,
+    t.tipo AS tipo_energia,
+    DATE(pe.fecha_hora) AS fecha,
+    SUM(pe.potencia_instantanea) AS produccion_diaria_mw
+FROM planta_de_generacion p
+JOIN tipo_planta t ON p.id_tipo_planta = t.id_tipo_planta
+JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+GROUP BY p.id_planta_de_generacion, t.tipo, DATE(pe.fecha_hora);
+-- 2.	V_EquiposEnMantenimiento: Detalla los equipos actualmente en mantenimiento.
+CREATE VIEW V_EquiposEnMantenimiento AS
+SELECT 
+    e.id_equipo_generacion,
+    e.numero_serie,
+    e.marca,
+    e.modelo,
+    e.estado_actual,
+    m.equipos_involucrados,
+    m.planta,
+    m.descripcion_de_actividades,
+    f.correctivo,
+    f.preventivo,
+    f.predictivo
+FROM equipos_de_generacion e
+JOIN mantenimiento_de_instalaciones m ON e.id_planta_de_generacion = m.id_planta_de_generacion
+JOIN fecha_programada f ON m.id_mantenimiento_de_instalacion = f.id_mantenimiento_de_instalacion
+WHERE CURDATE() BETWEEN f.correctivo AND f.correctivo
+   OR CURDATE() BETWEEN f.preventivo AND f.preventivo
+   OR CURDATE() BETWEEN f.predictivo AND f.predictivo;
+-- 3.	V_RendimientoPlantasGeneracion: Análisis de rendimiento por planta y periodo
+CREATE VIEW V_RendimientoPlantasGeneracion AS
+SELECT
+    p.id_planta_de_generacion,
+    p.codigo_unico,
+    t.tipo AS tipo_energia,
+    DATE(pe.fecha_hora) AS fecha,
+    SUM(pe.potencia_instantanea) AS produccion_total_mw,
+    AVG(pe.factor_capacidad) AS factor_capacidad_promedio
+FROM planta_de_generacion p
+JOIN tipo_planta t ON p.id_tipo_planta = t.id_tipo_planta
+JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+GROUP BY p.id_planta_de_generacion, t.tipo, DATE(pe.fecha_hora);
+-- 4.	V_ContratosVigentes: Lista de contratos vigentes con sus condiciones.
+CREATE VIEW V_ContratosVigentes AS
+SELECT
+    c.id_contrato_venta_energia,
+    c.numero AS numero_contrato,
+    c.fecha AS fecha_inicio,
+    c.periodo_vigencia,
+    c.condiciones_especiales,
+    c.tarifa_acordada,
+    c.potencia_contratada,
+    c.estado,
+    c.punto_de_entrega
+FROM contratos_de_venta_de_energia c
+WHERE c.estado = 'Vigente';
+-- 5.	V_CondicionesMeteorologicas: Datos meteorológicos por estación y periodo.
+CREATE VIEW V_CondicionesMeteorologicas AS
+SELECT
+    em.id_estacion_meteorologica,
+    em.ubicacion,
+    em.coordenadas,
+    DATE(lm.fecha_hora) AS fecha,
+    lm.unidad_medida,
+    lm.valor_medido,
+    lm.validacion
+FROM estaciones_meteorologicas em
+JOIN lecturas_meteorologicas lm ON em.id_estacion_meteorologica = lm.id_estacion_meteorologica;
+-- 1.	EVT_VerificarRendimientoEquipos: Verifica periódicamente el rendimiento de equipos críticos
+CREATE EVENT IF NOT EXISTS EVT_VerificarRendimientoEquipos
+ON SCHEDULE EVERY 1 DAY
+DO
+    SELECT e.id_equipo_generacion,
+           e.numero_serie,
+           e.estado_actual,
+           e.eficiencia
+    FROM equipos_de_generacion e
+    WHERE e.eficiencia < 80;  -- Umbral crítico del 80%
+-- 2.	EVT_GenerarPronosticosProduccion: Genera pronósticos de producción según condiciones meteorológicas.
+CREATE EVENT IF NOT EXISTS EVT_GenerarPronosticosProduccion
+ON SCHEDULE EVERY 1 DAY
+DO
+    INSERT INTO produccion_energetica (equipos_activos, potencia_instantanea, condiciones_meteorologicas, factor_capacidad, codigo_planta, fecha_hora, id_planta_de_generacion)
+    SELECT 
+        1,  -- Suponemos 1 equipo activo por simplificación
+        AVG(l.valor_medido) * 0.8,  -- Pronóstico simple basado en promedio meteorológico y factor de corrección
+        CONCAT('Viento:', MAX(l.valor_medido), ' Temperatura:', MAX(l.valor_medido)),
+        0.8,  -- Factor de capacidad estimado
+        p.codigo_unico,
+        NOW(),
+        p.id_planta_de_generacion
+    FROM planta_de_generacion p
+    JOIN estaciones_meteorologicas em ON 1=1  -- Podríamos unir según ubicación, aq…
+-- 3.	EVT_ActualizarFactorCapacidad: Actualiza el factor de capacidad por planta mensualmente
+CREATE EVENT IF NOT EXISTS EVT_ActualizarFactorCapacidad
+ON SCHEDULE EVERY 1 MONTH
+DO
+    UPDATE produccion_energetica pe
+    JOIN planta_de_generacion p ON pe.id_planta_de_generacion = p.id_planta_de_generacion
+    SET pe.factor_capacidad = 0.85  -- Valor promedio mensual estimado
+    WHERE MONTH(pe.fecha_hora) = MONTH(CURDATE()) AND YEAR(pe.fecha_hora) = YEAR(CURDATE());
+-- 4.	EVT_MonitorearCumplimientoContratos: Monitorea el cumplimiento de los contratos de venta
+CREATE EVENT IF NOT EXISTS EVT_MonitorearCumplimientoContratos
+ON SCHEDULE EVERY 1 DAY
+DO
+    UPDATE contratos_de_venta_de_energia
+    SET estado = CASE
+                    WHEN fecha < CURDATE() AND estado = 'Vigente' THEN 'Vencido'
+                    ELSE estado
+                 END;
+-- 5.	EVT_ProgramarMantenimientosPreventivos: Programa mantenimientos preventivos según horas de funcionamiento.
+CREATE EVENT IF NOT EXISTS EVT_ProgramarMantenimientosPreventivos
+ON SCHEDULE EVERY 1 DAY
+DO
+    INSERT INTO fecha_programada (correctivo, predictivo, preventivo, id_mantenimiento_de_instalacion)
+    SELECT 
+        NULL, 
+        NULL, 
+        CURDATE() + INTERVAL 30 DAY,  -- Programa mantenimiento preventivo 30 días después
+        m.id_mantenimiento_de_instalacion
+    FROM mantenimiento_de_instalaciones m
+    JOIN equipos_de_generacion e ON m.id_planta_de_generacion = e.id_planta_de_generacion
+    WHERE e.estado_actual = 'Operativo';
+-- 1.	FN_CalcularEficienciaConversion: Calcula la eficiencia de conversión energética de una planta.
+DELIMITER //
+
+CREATE FUNCTION FN_CalcularEficienciaConversion(p_id_planta INT)
+RETURNS DECIMAL(5,2)
+DETERMINISTIC
+BEGIN
+    DECLARE eficiencia DECIMAL(5,2);
+
+    SELECT 
+        (SUM(eg.horaria) / (p.capacidad_instalada_mw * COUNT(eg.id_energia_generada_periodo))) * 100
+    INTO eficiencia
+    FROM planta_de_generacion p
+    JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+    JOIN energia_generada_por_periodo eg ON pe.id_produccion_energetica = eg.id_produccion_energetica
+    WHERE p.id_planta_de_generacion = p_id_planta;
+
+    RETURN eficiencia;
+END //
+
+DELIMITER ;
+-- 2.	FN_EstimarProduccionDiaria: Estima la producción diaria según condiciones meteorológicas.
+DELIMITER //
+
+CREATE FUNCTION FN_EstimarProduccionDiaria(p_id_planta INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE produccion DECIMAL(10,2);
+
+    SELECT 
+        p.capacidad_instalada_mw * 24 * AVG(t.velocidad) / 100
+    INTO produccion
+    FROM planta_de_generacion p
+    LEFT JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+    LEFT JOIN lecturas_meteorologicas lm ON pe.id_planta_de_generacion = lm.id_estacion_meteorologica
+    LEFT JOIN tipo_de_lectura t ON lm.id_lectura_meteorologica = t.id_lectura_meteorologica
+    WHERE p.id_planta_de_generacion = p_id_planta;
+
+    RETURN produccion;
+END //
+
+DELIMITER ;
+
+#3.FN_CalcularRetornoInversion: Calcula el retorno de inversión para una planta específica
+DELIMITER //
+
+CREATE FUNCTION FN_CalcularRetornoInversion(p_id_planta INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE retorno DECIMAL(10,2);
+    
+    SELECT 
+        (SUM(pe.potencia_instantanea * 24) * AVG(c.tarifa_acordada)) / p.inversion_general
+    INTO retorno
+    FROM planta_de_generacion p
+    LEFT JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+    LEFT JOIN contratos_de_venta_de_energia c ON c.codigo = p.codigo_unico
+    WHERE p.id_planta_de_generacion = p_id_planta;
+    
+    RETURN retorno;
+END //
+
+DELIMITER ;
+
+SELECT FN_CalcularRetornoInversion(1) AS RetornoInversion;
+
+# 4.FN_ObtenerDisponibilidadPlanta: Calcula la disponibilidad de una planta en un periodo.
+DELIMITER //
+
+CREATE FUNCTION FN_ObtenerDisponibilidadPlanta(
+    p_id_planta INT,
+    p_fecha_inicio DATE,
+    p_fecha_fin DATE
+)
+RETURNS DECIMAL(5,2)
+DETERMINISTIC
+BEGIN
+    DECLARE disponibilidad DECIMAL(5,2);
+    DECLARE total_dias INT;
+    DECLARE dias_operativos INT;
+
+    SET total_dias = DATEDIFF(p_fecha_fin, p_fecha_inicio) + 1;
+
+    SELECT COUNT(*) 
+    INTO dias_operativos
+    FROM produccion_energetica
+    WHERE id_planta_de_generacion = p_id_planta
+      AND fecha_hora BETWEEN p_fecha_inicio AND p_fecha_fin
+      AND potencia_instantanea > 0;
+
+    SET disponibilidad = (dias_operativos / total_dias) * 100;
+
+    RETURN disponibilidad;
+END //
+
+DELIMITER ;
+
+SELECT FN_ObtenerDisponibilidadPlanta(1, '2025-01-01', '2025-01-31') AS Disponibilidad;
+
+#5.	FN_CalcularEmisionesCO2Evitadas: Calcula las emisiones de CO2 evitadas por la generación renovable.
+
+DELIMITER //
+
+CREATE FUNCTION FN_CalcularEmisionesCO2Evitadas(
+    p_id_planta INT
+)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE emisiones DECIMAL(10,2);
+
+    -- Suponemos un factor de emisiones de 0.5 toneladas de CO2 por MWh generado
+    SELECT SUM(eg.diaria * 0.5)
+    INTO emisiones
+    FROM planta_de_generacion p
+    JOIN produccion_energetica pe ON p.id_planta_de_generacion = pe.id_planta_de_generacion
+    JOIN energia_generada_por_periodo eg ON pe.id_produccion_energetica = eg.id_produccion_energetica
+    WHERE p.id_planta_de_generacion = p_id_planta;
+
+    RETURN emisiones;
+END //
+
+DELIMITER ;
+
+SELECT FN_CalcularEmisionesCO2Evitadas(1) AS CO2Evitadas;
+
+#2. FN_EstimarProduccionDiaria: Estima la producción diaria según condiciones meteorológicas.
+
+SELECT FN_EstimarProduccionDiaria(1) AS ProduccionDiaria;
+
+#1. FN_CalcularEficienciaConversion: Calcula la eficiencia de conversión energética de una planta
+
+SELECT FN_CalcularEficienciaConversion(1) AS EficienciaConversion;
+
+#
+
+  
+  
